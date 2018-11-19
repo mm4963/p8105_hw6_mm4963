@@ -1,0 +1,61 @@
+---
+title: "Homework 6"
+author: "Melanie Mayer"
+date: "11/19/2018"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+  
+```
+
+##Probem 1
+
+Read in and tidy data:
+
+```{r}
+homicide_df = read_csv("https://raw.githubusercontent.com/washingtonpost/data-homicides/master/homicide-data.csv") %>%
+  mutate(city_state = str_c(city, ", ", state),
+         disposition = factor(disposition),
+         victim_age = as.integer(victim_age),
+         resolved = ifelse(disposition == "Open/No arrest", 0, 1),
+         resolved = factor(resolved),
+         victim_race2 = ifelse(victim_race == "White", "white", "non-white"),
+         victim_race2 = factor(victim_race2, levels = c("white", "non-white"))) %>%
+  filter(!city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"))
+
+
+#NAs created for unknown ages
+```
+
+Create a model for Baltimore:
+
+```{r}
+
+baltimore_glm = homicide_df %>%
+  filter(city_state == "Baltimore, MD") %>%
+  glm(resolved ~ victim_age + victim_sex + victim_race2, data = ., family = binomial())
+
+
+baltimore_glm %>%
+  broom::tidy() %>% 
+  mutate(OR = exp(estimate),
+         conf.low = exp(confint(baltimore_glm))[,1],
+         conf.high = exp(confint(baltimore_glm)[,2])) %>%
+  select(term, OR, conf.low, conf.high) %>% 
+  knitr::kable(digits = 3)
+ 
+
+```
+
+Create a model for all cities:
+
+```{r}
+
+```
+
+
+
+
+
