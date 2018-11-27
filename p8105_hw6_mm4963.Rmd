@@ -8,7 +8,7 @@ output: github_document
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(modelr)
-  
+library(MASS)  
 ```
 
 ##Probem 1
@@ -19,16 +19,29 @@ Read in and clean data:
 homicide_df = read_csv("https://raw.githubusercontent.com/washingtonpost/data-homicides/master/homicide-data.csv") %>%
   mutate(city_state = str_c(city, ", ", state),
          disposition = factor(disposition),
-         victim_age = as.integer(victim_age),
-         resolved = ifelse(disposition == "Open/No arrest", 0, 1),
+         victim_age = as.numeric(victim_age),
+         resolved = ifelse(disposition == "Closed by arrest", 1, 0),
          resolved = factor(resolved),
          victim_race2 = ifelse(victim_race == "White", "white", "non-white"),
          victim_race2 = factor(victim_race2, levels = c("white", "non-white"))) %>%
   filter(!city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"))
 
 
-#NAs created for unknown ages
+#Homicide resolved defined as "Closed by arrest"
+#Unsolved defined as "Closed without arrest" or "Open/No arrest"
+
+#Check for missing data
+homicide_df %>% 
+  select_if(function(x) any(is.na(x))) %>% 
+  summarise_each(funs(sum(is.na(.)))) %>%
+  knitr::kable()
+
 ```
+
+This data tells us about the criminal homicides since 2007 in 50 of the largest cities in the USA. For each homicide information is given on the victim's age, race, and sex. The location of the incident described by the city, state, and longitudinal/latitudinal point is specified. The outcome of the homicide, i.e. whether it resulted in an arrest, is also presented.
+
+City-state variable, binary variable indicating whether the homicide is solved, and binary variable indicating whether the victim is white are created. Cities Dallas, TX; Phoenix, AZ; Kansas City, MO; and Tulsa, AL are ommited due to lack of data or data entry error. Age is coerced into numeric, NAs are created for unknown ages. These will be ommited in the upcoming model. The indicator variables come from variables which have no missing data, therefore they do not have any missing values.
+
 
 Create a model for Baltimore:
 
@@ -38,6 +51,7 @@ baltimore_glm = homicide_df %>%
   filter(city_state == "Baltimore, MD") %>%
   glm(resolved ~ victim_age + victim_sex + victim_race2, data = ., family = binomial())
 
+#Extract wanted information and display
 
 baltimore_glm %>%
   broom::tidy() %>% 
@@ -45,31 +59,38 @@ baltimore_glm %>%
          conf.low = exp(confint(baltimore_glm))[,1],
          conf.high = exp(confint(baltimore_glm)[,2])) %>%
   filter(term == "victim_race2non-white") %>%
-  select(term, OR, conf.low, conf.high) %>% 
+  dplyr::select(term, OR, conf.low, conf.high) %>% 
   knitr::kable(digits = 3)
  
 ```
 
-Create a model for all cities:
+Above we obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing non-white victims to white victims keeping all other variables fixed for the city of Baltimore, MD. 
+
+
+
+Create a model for all cities in data set:
 
 ```{r, warning = F, message = F}
 
+#Map previously used model to all cities
+#Clean and ouput wanted information
+
 race_glm = homicide_df %>%
-  select(city_state, resolved, victim_age, victim_sex, victim_race2) %>%
+  dplyr::select(city_state, resolved, victim_age, victim_sex, victim_race2) %>%
   mutate(city_state = factor(city_state)) %>%
   nest(-city_state) %>%
   mutate(glm = map(.$data, ~glm(resolved ~ victim_age + victim_sex + victim_race2, data = .x, family = binomial())),
          confint = map(glm, confint),
          glm = map(glm, ~ broom::tidy(.x)),
          confint = map(confint, ~broom::tidy(.x))) %>%
-  select(-data) %>%
+  dplyr::select(-data) %>%
   unnest() %>%
   filter(term == "victim_race2non-white") %>%
   rename(conf.low = "X2.5..", conf.high = "X97.5..") %>%
   mutate(OR = exp(estimate),
          conf.low = exp(conf.low),
          conf.high = exp(conf.high)) %>%
-  select(city_state, OR, conf.low, conf.high)
+  dplyr::select(city_state, OR, conf.low, conf.high)
 
 
 #Plot our findings
@@ -80,12 +101,13 @@ race_glm %>%
     geom_errorbar(aes(ymin = conf.low, ymax = conf.high)) +
     theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
     labs(x = "",
-         y = "",
-         title = "Odds Ratio")
+         y = "Odds Ratio",
+         title = "Solved Homicides based on Victim's Race",
+         caption = "Odds ratio compares non-whites to whites")
 
 ```
 
-
+The graph demonstrates the adjusted odds ratio for solving homicides comparing non-white victims to white victims, keeping victim age and sex fixed. We see there is a lot of variation across cities, ranging from `r (race_glm %>% arrange(OR))[1,2] %>% round(3) ` in `r (race_glm %>% arrange(OR))[1,1]` to `r (race_glm %>% arrange(-OR))[1,2] %>% round(3)  ` in `r (race_glm %>% arrange(-OR))[1,1]`. Certain cities have much smaller confidence intervals than others as well. This may be a result of ranging sample sizes from different amounts of homicides occuring in each city, or from missing data. 
 
 ##Probem 2
 
@@ -100,44 +122,65 @@ birth_weight_df = read_csv("./birthweight.csv") %>%
          mrace = factor(mrace)
          )
 
+#Categorical variables factored
+#Numerical variables as numeric
+
+#Check for missing data
+birth_weight_df %>% 
+  select_if(function(x) any(is.na(x))) %>% 
+  summarise_each(funs(sum(is.na(.)))) %>%
+  knitr::kable()
+#There are no NAs in the data frame
+
 ```
 
 
-Create regression model:
+Create regression model for birthweight:
 
 ```{r}
-#bwt_lm  <- lm(bwt ~ ., data = birth_weight_df)
-#step(bwt_lm)
+#Create a model with all variables
+bwt_lm_step = lm(formula = bwt ~ ., data = birth_weight_df)
 
-bwt_lm = lm(formula = bwt ~ babysex + bhead + blength + delwt + fincome + 
-    gaweeks + mheight + mrace + parity + ppwt + smoken, data = birth_weight_df)
-AIC(bwt_lm)
-
-
+#Use an automatic stepwise process for variable selection
+bwt_lm_step <- stepAIC(bwt_lm_step, direction = "both")
+#Show results
+bwt_lm_step %>%
+  broom::glance()
 
 
 ```
+
+I used a data driven stepwise selection method to create a model to predict birthweight. This selected the variables which would minimize the AIC. This may be problematic because it may remove variables which we are interested in seeing the relationship with birthweight and it may include highly correlated covariates. For simply predictive purposes however this appears to do well, with an R squared of `r bwt_lm_step %>% broom::glance() %>% pull(r.squared) %>% round(3)`.  
+
 
 Diagnostic of previously created model:
 
 ```{r}
 
 birth_weight_df %>%
-  modelr::add_predictions(bwt_lm) %>%
-  modelr::add_residuals(bwt_lm) %>%
-  ggplot(aes(x = resid, y = pred)) + 
-  geom_point(alpha = 0.5)
+  modelr::add_predictions(bwt_lm_step) %>%
+  modelr::add_residuals(bwt_lm_step) %>%
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point(alpha = 0.5) +
+    labs(x = "Predicted Value",
+         y = "Residual",
+         title = "Birthweight Model")
 
 ```
+
+The plot above shows us how well we satisfied the assumption of equal variance of the residuals as well as looks for outliers. There is a big data size, `r dim(birth_weight_df)[1]`, therefore seeing a trend is difficult. The residuals do seem to bounce around zero which is good since the expected value is zero. There does seem to be some values which stand out on the lower end however, we may want to look into these if we were to continue with this model.  
+
 
 Comparing models (CV):
 
 ```{r}
+set.seed(1)
 
-bwt_lm_2 = lm(bwt ~ gaweeks + blength, data = birth_weight_df)
+#Create models to compare mine to 
+bwt_lm_2 = lm(bwt ~ blength + gaweeks, data = birth_weight_df)
 bwt_lm_3interact = lm(bwt ~ bhead*blength*babysex, data = birth_weight_df)
 
-
+#Create training and testing data, cross validate
 cv_df = 
   crossv_mc(birth_weight_df, 100) %>% 
   mutate(train = map(train, as_tibble),
@@ -149,8 +192,10 @@ cv_df =
          rmse_reg_mod      = map2_dbl(reg_mod, test, ~rmse(model = .x, data = .y)),
          rmse_interact_mod = map2_dbl(interact_mod, test, ~rmse(model = .x, data = .y)))
 
+
+#Plot RMSE to compare models
 cv_df %>% 
-  select(starts_with("rmse")) %>% 
+  dplyr::select(starts_with("rmse")) %>% 
   gather(key = model, value = rmse) %>% 
   mutate(model = str_replace(model, "rmse_", ""),
          model = fct_inorder(model)) %>% 
@@ -159,7 +204,7 @@ cv_df %>%
 ```
 
 
-
+We are looking for the model which gives us the lowest root mean squared error (RMSE). We see the model only using length at birth and gestational age as predictors does not do a very good job with the testing data and therefore we would not count on it to have the best predictive ability of birthweight. My model does a little better than the interaction model. Mine, however, has a lot more variables which may be problematic while the interaction model can be very confusing to interpret. In practice I would use my model but try to cut down on variables if possible and look more into collinearity and the assumptions of a linear regression model, seeing how we may have some violations. 
 
 
 
